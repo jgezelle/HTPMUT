@@ -1,0 +1,71 @@
+# VS Code
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Python / notebooks
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Conda/venv
+.env/
+.venv/
+*.conda
+
+# Data & large outputs (keep code + configs; skip payloads)
+work/01_raw/
+work/02_trim/
+work/03_qc/
+work/04_align/
+localscratch/
+.tmp/
+*.tmp
+
+# Bio file types (big)
+*.fastq
+*.fastq.gz
+*.fq
+*.fq.gz
+*.zip
+*.tar
+*.tar.gz
+
+# alignments 
+*.bam
+*.bai
+*.bam.bai
+*.sam
+*.cram
+
+# Indices (keep .fa, ignore derived)
+*.bt2
+*.bt2l
+*.bwt
+*.fai
+*.crai
+
+# tracks
+*.bedGraph
+*.bw
+*.bed
+*.bigWig
+
+# Reports & misc
+multiqc_data/
+multiqc_report.html
+tmp/
+*.log
+
+# refseqs
+data/refseqs/
+
+# plots
+*.png
+*.pdf
+
+# tmp workflows and notes
+
+# old useless scripts, scripts with issues  
+
+
