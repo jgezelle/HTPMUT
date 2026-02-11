@@ -197,3 +197,148 @@ nano "$SCRIPTS/leader_summary.sh"
 bash "$SCRIPTS/leader_summary.sh"
 ```
 Loops over every *.HASLEAD.fastq.gz file in `02_trim` ; Finds the matching .NOLEAD.fastq.gz for each sample; Counts reads (lines / 4); Computes total reads per sample; Computes fraction of reads retaining the leader (HASLEAD / Total); Writes all of this to leader_summary.tsv
+
+# 03_qc
+```bash
+TRIM=/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT/work/02_trim
+QC=$ROOT/work/03_qc
+mkdir -p "$QC"
+
+# FastQC on all trimmed reads 
+fastqc -t 8 -o "$QC" "$TRIM"/*.insert.fastq.gz
+
+# Optional: leader-split QC 
+fastqc -t 8 -o "$QC" "$TRIM"/*.HASLEAD.fastq.gz
+fastqc -t 8 -o "$QC" "$TRIM"/*.NOLEAD.fastq.gz
+```
+```bash
+# Aggregate into MultiQC report
+multiqc -o "$QC" "$QC"
+```
+```bash
+# scp to local and view report
+# on local machine; 
+scp -r jgg2144@hpc.c2b2.columbia.edu:/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT/work/03_qc/multiqc_report.html ~/Downloads/
+```
+# 04_align
+```bash 
+mkdir -p "$ROOT/data/refseqs"
+cd "$ROOT/data/refseqs"
+nano refseqs/zikv_xr2_wt.fa
+nano refseqs/denv_xr2_wt.fa
+```
+for now, both references include universal 5' end, but not the universal 3' end. <br>
+**`zikv_xr2_wt.fa`** <br>
+`GGATTAATATAATCTGGGAAACCAAGCTCATAGTCAGGCCGAGAACGCCATGGCACGGAAGAAGCCATGCTGCCTGTGAGCCCCTCAGAGGACACTGAGTCAAAAAACCCCAC` <br>
+**`denv_xr2_wt.fa`**<br>
+`GGATTAATATAATCCAAGGACGTTAAAAGAAGTCAGGCCATCATAAATGCCATAGCTGGAGTAAACTATGCAGCCTGTAGCTCCACCTGAGAAGGTGTAAAAAATCCGGGAGG`
+
+– notes - <br>
+-will use `--very-sensitive-local` so that Bowtie2 can align part of the read, even if it isn't a perfect match (contains muts.)<br>
+-recall unmatched ends will be soft-clipped <br>
+–recall that ligation oligo added max 8 bases, which will be soft-clipped in either case <br>
+
+**index** - create the binary lookup tables Bowtie2 uses for fast matching: <br>
+```bash
+cd "$ROOT/data/refseqs"
+bowtie2-build zikv_xr2_wt.fa zikv_xr2_wt
+bowtie2-build denv_xr2_wt.fa denv_xr2_wt
+```
+now, navigate to align dir: 
+```bash
+ALIGN="$ROOT/work/04_align"
+TRIM="$ROOT/work/02_trim"
+mkdir -p "$ALIGN"
+cd "$ALIGN"
+```
+### try align with one sample pair first: 
+```bash
+SAMPLE=260120-r0399-ZX-01-A3466_R1
+REF="$ROOT/data/refseqs/zikv_xr2_wt"
+```
+
+```bash 
+bowtie2 -p 8 \
+  --very-sensitive-local \
+  -x "$REF" \
+  -U "$ROOT/work/02_trim/${SAMPLE}.insert.fastq.gz" \
+  2> "${SAMPLE}.bowtie2.log" \
+| samtools view -bS - \
+| samtools sort -o "${SAMPLE}.sorted.bam"
+
+samtools index "${SAMPLE}.sorted.bam"
+```
+inspect: 
+```bash
+samtools flagstat ${SAMPLE}.sorted.bam
+less ${SAMPLE}.bowtie2.log
+```
+example output: <br>
+```99.09% overall alignment rate
+...skipping...
+3673782 reads; of these:
+  3673782 (100.00%) were unpaired; of these:
+    33262 (0.91%) aligned 0 times
+    3638607 (99.04%) aligned exactly 1 time
+    1913 (0.05%) aligned >1 times
+99.09% overall alignment rate
+```
+do for all 12 samples independently. <br>
+
+or, can loop: <br>
+```bash
+TRIM="$ROOT/work/02_trim"
+REFDIR="$ROOT/data/refseqs"
+
+for READS in "$TRIM"/*.insert.fastq.gz; do
+  SAMPLE=$(basename "$READS" .insert.fastq.gz)
+
+  # choose reference based on virus
+  if [[ "$SAMPLE" == *-Z* ]]; then
+    REF="$REFDIR/zikv_xr2_wt"
+  elif [[ "$SAMPLE" == *-D* ]]; then
+    REF="$REFDIR/denv_xr2_wt"
+  else
+    echo "Unknown virus for $SAMPLE — skipping"
+    continue
+  fi
+
+  echo "Aligning $SAMPLE"
+
+  bowtie2 -p 8 \
+    --very-sensitive-local \
+    -x "$REF" \
+    -U "$READS" \
+    2> "${SAMPLE}.bowtie2.log" \
+  | samtools view -bS - \
+  | samtools sort -o "${SAMPLE}.sorted.bam"
+
+  samtools index "${SAMPLE}.sorted.bam"
+
+  samtools flagstat "${SAMPLE}.sorted.bam" \
+    > "${SAMPLE}.flagstat.txt"
+done
+
+```
+
+check overall stat:
+```bash
+grep "overall alignment rate" *.bowtie2.log
+```
+example output: 
+```
+260120-r0399-ZR-01-A3483_R1.bowtie2.log:99.86% overall alignment rate
+260120-r0399-ZR-02-A3456_R1.bowtie2.log:99.87% overall alignment rate
+260120-r0399-ZR-03-A3451_R1.bowtie2.log:99.86% overall alignment rate
+260120-r0399-ZX-01-A3466_R1.bowtie2.log:99.09% overall alignment rate
+260120-r0399-ZX-02-A3452_R1.bowtie2.log:99.18% overall alignment rate
+260120-r0399-ZX-03-A3450_R1.bowtie2.log:99.01% overall alignment rate
+260120-r0400-DR-01-A3413_R1.bowtie2.log:99.92% overall alignment rate
+260120-r0400-DR-02-A3419_R1.bowtie2.log:99.91% overall alignment rate
+260120-r0400-DR-03-A3485_R1.bowtie2.log:99.89% overall alignment rate
+260120-r0400-DX-01-A3429_R1.bowtie2.log:99.74% overall alignment rate
+260120-r0400-DX-02-A3499_R1.bowtie2.log:99.71% overall alignment rate
+260120-r0400-DX-03-A3484_R1.bowtie2.log:99.66% overall alignment rate
+```
+
+Pick one ZR and ZX BAM; Move on to coverage / mutation analysis
