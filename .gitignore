@@ -18,6 +18,8 @@ work/01_raw/
 work/02_trim/
 work/03_qc/
 work/04_align/
+work/05_pileup/
+work/06_logo/
 localscratch/
 .tmp/
 *.tmp

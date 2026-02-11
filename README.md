@@ -268,7 +268,8 @@ bowtie2 -p 8 \
 
 samtools index "${SAMPLE}.sorted.bam"
 ```
-inspect: 
+inspect (`flagstat` gives alignment information like mapped vs. unmapped reads):
+
 ```bash
 samtools flagstat ${SAMPLE}.sorted.bam
 less ${SAMPLE}.bowtie2.log
@@ -285,7 +286,7 @@ example output: <br>
 ```
 do for all 12 samples independently. <br>
 
-or, can loop: <br>
+### or, can loop alignment, sorting, indexing, flagstat: <br>
 ```bash
 TRIM="$ROOT/work/02_trim"
 REFDIR="$ROOT/data/refseqs"
@@ -341,4 +342,122 @@ example output:
 260120-r0400-DX-03-A3484_R1.bowtie2.log:99.66% overall alignment rate
 ```
 
-Pick one ZR and ZX BAM; Move on to coverage / mutation analysis
+# 05_pileup
+
+use samtools to get pileup information (input is the bam file)<br>
+
+use a python script: **pileup_to_counts.py** to clean samtools column into meaninful data <br>
+
+script explained: key function is `mpileup` in samtools <br>
+`samtools mpileup -f ref.fa sample.sorted.bam > sample.pileup`<br>
+goes through each position in the reference; looks at all reads overlapping that position; reports: reference base, coverage depth, actual bases observed in the reads<br>
+
+column 5 contains symbols for the actual / observed bases: <br>
+`.`	match to reference (forward strand)<BR>
+`,`	match to reference (reverse strand)<BR>
+`A,C,G,T`	mismatch<BR>
+`a,c,g,t`	mismatch on reverse strand<BR>
+`^`	start of read<BR>
+`$`	end of read<BR>
+`+2AG`insertion<BR>
+`-1T`	deletion <BR>
+
+in order to make sequence logos, clean column 5, so that provides explicit base counts for each base: 
+`A_count`
+`C_count`
+`G_count`
+`T_count`
+
+The loop will, at each ref. pos., parse columns, clean the base string, convert matches (., ,) to reference base, count A/C/G/T, store result
+
+### loop through pileup to counts: 
+```bash
+ROOT=/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT
+ALIGN="$ROOT/work/04_align"
+PILEUP="$ROOT/work/05_pileup"
+
+for BAM in "$ALIGN"/*.sorted.bam; do
+
+  BASENAME=$(basename "$BAM" .sorted.bam)
+
+  # choose reference
+  if [[ "$BASENAME" == *-Z* ]]; then
+    REF="$ROOT/data/refseqs/zikv_xr2_wt.fa"
+  elif [[ "$BASENAME" == *-D* ]]; then
+    REF="$ROOT/data/refseqs/denv_xr2_wt.fa"
+  else
+    echo "Unknown sample: $BASENAME"
+    continue
+  fi
+
+  echo "Processing $BASENAME"
+
+  # 1. generate pileup
+  samtools mpileup -f "$REF" "$BAM" > "$PILEUP/${BASENAME}.pileup"
+
+  # 2. convert pileup to counts
+  python "$ROOT/scripts/pileup_to_counts.py" \
+    "$PILEUP/${BASENAME}.pileup" \
+    "$PILEUP/${BASENAME}.counts.tsv"
+
+done
+
+```
+check that the pileup outputs exist: <br>
+```bash
+ls $PILEUP | head
+```
+
+# 06_logo
+### use the per-position base frequencies from `05_pileup` to create input/output sequence logos for each condition
+```bash
+conda install -c conda-forge logomaker -y
+```
+### first, the 3 replicates of like conditions will be combined, normalizing for read depth. <br>
+python script 
+**mut_freq_norm.py**<br>
+--reads all .pileup.counts.tsv files from 05_pileup ; detects which virus each sample is (Zika or Dengue) and whether it’s R (input) or X (exonuclease-treated) ; computes mutation frequency per position, normalized by coverage ; combines replicates to get mean ± standard deviation per position ; writes out tables for plotting and sequence logos.
+
+`mutation frequency at position i`= 1 −
+(`count of reads matching WT at i` / 
+`total depth at i`)
+ achieved by python line: <br>
+```py
+df["ref_frac"] = df.apply(lambda row: row[row["ref"]] / row["depth"], axis=1)
+df["mut_rate"] = 1 - df["ref_frac"]
+```
+
+`row["ref"]` = count of the reference base at that position
+
+`row["depth"]` = total reads covering the position
+
+`mut_rate` = fraction of reads that are mutant, normalized per position
+
+**every replicate is internally normalized.** <br>
+once each replicate is normalized: <br>
+average the `mut_rate` across replicates at each position to get a mean mutation rate per position.
+
+see this line:
+```py
+combined.groupby("pos").mean().reset_index()
+```
+get standard dev: 
+```py
+combined.groupby("pos")["mut_rate"].agg(["mean", "std", "count"]).reset_index()
+```
+`mean` = average mutation rate at each position
+
+`std` = standard deviation across replicates
+
+`count` = number of replicates contributing
+
+to plot error bars:
+```py
+import matplotlib.pyplot as plt
+
+plt.fill_between(zr_stats["pos"], 
+                 zr_stats["mean"] - zr_stats["std"], 
+                 zr_stats["mean"] + zr_stats["std"], 
+                 alpha=0.2, label="ZR ±1 SD")
+plt.plot(zr_stats["pos"], zr_stats["mean"], label="ZR")
+```
