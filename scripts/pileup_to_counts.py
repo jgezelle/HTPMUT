@@ -3,6 +3,7 @@ import pandas as pd
 
 # Input pileup file from command line
 pileup_file = sys.argv[1]
+out_tsv = sys.argv[2]
 
 # We will store results here
 rows = []
@@ -63,4 +64,4 @@ with open(pileup_file) as f:
 
 df = pd.DataFrame(rows, columns=["pos", "ref", "A", "C", "G", "T"])
 
-df.to_csv(pileup_file + ".counts.tsv", sep="\t", index=False)
+df.to_csv(out_tsv, sep="\t", index=False)  # <-- NEW

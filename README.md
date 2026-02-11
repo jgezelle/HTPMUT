@@ -370,7 +370,7 @@ in order to make sequence logos, clean column 5, so that provides explicit base 
 
 The loop will, at each ref. pos., parse columns, clean the base string, convert matches (., ,) to reference base, count A/C/G/T, store result
 
-### loop through pileup to counts: 
+### loop through pileup to get counts (depth is limited to 8K): 
 ```bash
 ROOT=/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT
 ALIGN="$ROOT/work/04_align"
@@ -403,6 +403,42 @@ for BAM in "$ALIGN"/*.sorted.bam; do
 done
 
 ```
+### try pileup without read depth limitation (takes more memory but preserves depth): EDIT: memory hog, doesn't work well
+```bash
+ROOT=/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT
+ALIGN="$ROOT/work/04_align"
+PILEUP="$ROOT/work/05_pileup"
+
+mkdir -p "$PILEUP"
+
+for BAM in "$ALIGN"/*.sorted.bam; do
+  BASENAME=$(basename "$BAM" .sorted.bam)
+
+  # choose reference
+  if [[ "$BASENAME" == *-Z* ]]; then
+    REF="$ROOT/data/refseqs/zikv_xr2_wt.fa"
+  elif [[ "$BASENAME" == *-D* ]]; then
+    REF="$ROOT/data/refseqs/denv_xr2_wt.fa"
+  else
+    echo "Unknown sample: $BASENAME"
+    continue
+  fi
+
+  echo "Processing $BASENAME"
+
+  # 1) mpileup: remove depth cap + filter low quality
+  samtools mpileup \
+    -d 10000000 \
+    -q 20 -Q 20 \
+    -f "$REF" \
+    "$BAM" > "$PILEUP/${BASENAME}.pileup"
+
+  # 2) convert pileup to counts (explicit output filename)
+  python "$ROOT/scripts/pileup_to_counts.py" \
+    "$PILEUP/${BASENAME}.pileup" \
+    "$PILEUP/${BASENAME}.pileup.counts.tsv"
+done
+```
 check that the pileup outputs exist: <br>
 ```bash
 ls $PILEUP | head
@@ -411,53 +447,17 @@ ls $PILEUP | head
 # 06_logo
 ### use the per-position base frequencies from `05_pileup` to create input/output sequence logos for each condition
 ```bash
-conda install -c conda-forge logomaker -y
+conda activate viromelib
+conda install -c conda-forge logomaker -y # to have for sequence logo making 
 ```
-### first, the 3 replicates of like conditions will be combined, normalizing for read depth. <br>
-python script 
-**mut_freq_norm.py**<br>
---reads all .pileup.counts.tsv files from 05_pileup ; detects which virus each sample is (Zika or Dengue) and whether it’s R (input) or X (exonuclease-treated) ; computes mutation frequency per position, normalized by coverage ; combines replicates to get mean ± standard deviation per position ; writes out tables for plotting and sequence logos.
+python script that gathers from the pileup - mutation frequency per position per replicate (with reference WT base column): <br>
 
-`mutation frequency at position i`= 1 −
-(`count of reads matching WT at i` / 
-`total depth at i`)
- achieved by python line: <br>
-```py
-df["ref_frac"] = df.apply(lambda row: row[row["ref"]] / row["depth"], axis=1)
-df["mut_rate"] = 1 - df["ref_frac"]
-```
+```bash
+ROOT=/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT
+ALIGN="$ROOT/work/04_align"
+PILEUP="$ROOT/work/05_pileup"
+SCRIPTS="$ROOT/scripts"
 
-`row["ref"]` = count of the reference base at that position
-
-`row["depth"]` = total reads covering the position
-
-`mut_rate` = fraction of reads that are mutant, normalized per position
-
-**every replicate is internally normalized.** <br>
-once each replicate is normalized: <br>
-average the `mut_rate` across replicates at each position to get a mean mutation rate per position.
-
-see this line:
-```py
-combined.groupby("pos").mean().reset_index()
-```
-get standard dev: 
-```py
-combined.groupby("pos")["mut_rate"].agg(["mean", "std", "count"]).reset_index()
-```
-`mean` = average mutation rate at each position
-
-`std` = standard deviation across replicates
-
-`count` = number of replicates contributing
-
-to plot error bars:
-```py
-import matplotlib.pyplot as plt
-
-plt.fill_between(zr_stats["pos"], 
-                 zr_stats["mean"] - zr_stats["std"], 
-                 zr_stats["mean"] + zr_stats["std"], 
-                 alpha=0.2, label="ZR ±1 SD")
-plt.plot(zr_stats["pos"], zr_stats["mean"], label="ZR")
+cd "$SCRIPTS"
+python mut_freq_with_ref.py
 ```
