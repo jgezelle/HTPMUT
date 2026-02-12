@@ -14,12 +14,15 @@ __pycache__/
 *.conda
 
 # Data & large outputs (keep code + configs; skip payloads)
+work/
 work/01_raw/
 work/02_trim/
 work/03_qc/
 work/04_align/
 work/05_pileup/
+work/05_readcount/
 work/06_logo/
+work/06_subcounts/
 localscratch/
 .tmp/
 *.tmp

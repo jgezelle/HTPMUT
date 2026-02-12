@@ -403,7 +403,7 @@ for BAM in "$ALIGN"/*.sorted.bam; do
 done
 
 ```
-### try pileup without read depth limitation (takes more memory but preserves depth): EDIT: memory hog, doesn't work well
+### try pileup without read depth limitation (takes more memory but preserves depth): EDIT: memory hog, doesn't work
 ```bash
 ROOT=/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT
 ALIGN="$ROOT/work/04_align"
@@ -461,3 +461,105 @@ SCRIPTS="$ROOT/scripts"
 cd "$SCRIPTS"
 python mut_freq_with_ref.py
 ```
+-------------
+# 05_read count 
+## new approach for taking BAM files to get mut. frequencies
+```bash
+conda install -c bioconda bam-readcount -y
+```
+produces per-position depth + A/C/G/T counts without the `mpileup` huge “bases string”
+
+```bash
+ROOT=/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT
+ALIGN="$ROOT/work/04_align"
+OUT="$ROOT/work/05_readcount"
+REFDIR="$ROOT/data/refseqs"
+
+mkdir -p "$OUT"
+
+for BAM in "$ALIGN"/*.sorted.bam; do
+  BASE=$(basename "$BAM" .sorted.bam)
+
+  if [[ "$BASE" == *-Z* ]]; then
+    REF="$REFDIR/zikv_xr2_wt.fa"
+  elif [[ "$BASE" == *-D* ]]; then
+    REF="$REFDIR/denv_xr2_wt.fa"
+  else
+    echo "Unknown sample: $BASE"
+    continue
+  fi
+
+  # BAM has one reference contig; grab its name + length
+  IDXLINE=$(samtools idxstats "$BAM" | head -n 1)
+  CONTIG=$(echo "$IDXLINE" | cut -f1)
+  LEN=$(echo "$IDXLINE" | cut -f2)
+
+  REGION="${CONTIG}:1-${LEN}"
+ 
+
+  echo "bam-readcount: $BASE on $REGION"
+  bam-readcount -d 10000000 -f "$REF" -q 20 -b 20 "$BAM" "$REGION" \
+    > "$OUT/${BASE}.readcount.txt"
+done
+```
+note - alignment was done with the **.insert.fastq.gz** trimmed files - not the leader split files. <br>
+for the selection analysis, might be better to compare R samples, where leader-containing reads are expected (use HASLEAD) to X samples, where leader should be absent (use NOLEAD)<br>
+
+next might be useful to realign using split inputs:<br>
+
+Align using leader-specific FASTQs: <br>
+*.HASLEAD.fastq.gz for no-Xrn1 (R) <br>
+*.NOLEAD.fastq.gz for Xrn1 (X)<br>
+see **align_loop.sh** which has slight changes to previous loop 
+
+# 06_subcounts
+
+
+```bash
+ROOT=/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT
+mkdir -p "$ROOT/work/06_subcounts"
+```
+
+```bash
+# readcount -> substitution counts (restricted to degenerate region)
+
+mkdir -p $ROOT/work/06_subcounts
+python $ROOT/scripts/readcount_to_subcounts.py \
+  --readcount_dir $ROOT/work/05_readcount \
+  --out_tsv $ROOT/work/06_subcounts/substitution_counts.tsv \
+  --min_depth 1000 \
+  --restrict \
+  --zikv_deg 31-96 \
+  --denv_deg 31-94
+```
+```bash
+# substitution counts -> l2fc
+python $ROOT/scripts/subcounts_to_l2fc.py \
+  --in_tsv $ROOT/work/06_subcounts/substitution_counts.tsv \
+  --out_tsv $ROOT/work/06_subcounts/substitution_l2fc.tsv \
+  --alpha 1e-6
+```
+```bash
+# base-pair scores for DENV
+python $ROOT/scripts/bp_score_from_l2fc.py \
+  --l2fc_tsv $ROOT/work/06_subcounts/substitution_l2fc.tsv \
+  --out_tsv  $ROOT/work/06_subcounts/denv_bp_scores.tsv \
+  --virus DENV \
+  --dotbracket '..........(((((.........((.(((((.((.....))))))))))))))......(((((....))))).......' \
+  --seq 'UAAAAGAAGUCAGGCCAUCAUAAAUGCCAUAGCUGGAGUAAACUAUGCAGCCUGUAGCUCCACCUGAGAAGGUGUAAAAAA' \
+  --start_pos 24 \
+  --deg_start 31 --deg_end 94 \
+  --min_subs_per_class 1
+```
+```bash
+# base-pair scores for ZIKV
+python $ROOT/scripts/bp_score_from_l2fc.py \
+  --l2fc_tsv $ROOT/work/06_subcounts/substitution_l2fc.tsv \
+  --out_tsv  $ROOT/work/06_subcounts/zikv_bp_scores.tsv \
+  --virus ZIKV \
+  --dotbracket '..........(((((((....)).((((((.........))))))..))))).......(((((......)))))........' \
+  --seq 'AGCUCAUAGUCAGGCCGAGAACGCCAUGGCACGGAAGAAGCCAUGCUGCCUGUGAGCCCCUCAGAGGACACUGAGUCAAAAAA' \
+  --start_pos 25 \
+  --deg_start 31 --deg_end 96 \
+  --min_subs_per_class 1
+  ```
