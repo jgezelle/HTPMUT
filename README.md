@@ -532,6 +532,26 @@ python $ROOT/scripts/readcount_to_subcounts.py \
   --zikv_deg 31-96 \
   --denv_deg 31-94
 ```
+
+# 07_DESeq2
+treat each substitution feature (`pos_ref>alt`) as a “gene” , use for diff. exp. 
+
+determine - what are the “counts” for each feature? <br>
+  – alt_count for pos_ref>alt in each sample<br>
+
+`DESeq2` (in R): compare those counts between X vs R across replicates<br>
+
+input: `substitution_counts.tsv` 
+outputs: `deseq2_ZIKV_results.tsv`, `deseq2_DENV_results.tsv`
+provides:log2FoldChange, lfcSE, pvalue, padj<br>
+
+then, feed `DESeq2` log2FC into the base-pair scoring step (maintain vs disrupt) <br>
+
+### run the script **deseq2_subs.R** in R (local), using substitution_counts.tsv as input
+
+
+# 07_l2fc-py
+
 ```bash
 # substitution counts -> l2fc
 python $ROOT/scripts/subcounts_to_l2fc.py \
@@ -539,6 +559,9 @@ python $ROOT/scripts/subcounts_to_l2fc.py \
   --out_tsv $ROOT/work/06_subcounts/substitution_l2fc.tsv \
   --alpha 1e-6
 ```
+
+# 08_bp-scores
+
 ```bash
 # base-pair scores for DENV
 python $ROOT/scripts/bp_score_from_l2fc.py \
