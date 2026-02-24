@@ -1,0 +1,1125 @@
+---
+title: "mut_count_plot_2"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+
+## Setup
+library(DESeq2)
+library(tidyverse)
+
+COUNTS_PATH <- "work/06_counts/alt_counts_edit.csv"
+META_PATH   <- "work/06_counts/sample_table_edit.csv"
+
+OUTDIR <- "work/07_deseq2_results"
+dir.create(OUTDIR, recursive = TRUE, showWarnings = FALSE)
+
+WINDOWS <- list(
+  ZIKV = c(25, 107),
+  DENV = c(24, 104)
+)
+
+STRUCT <- list(
+  DENV = list(
+    pos_start = 24,
+    seq = "UAAAAGAAGUCAGGCCAUCAUAAAUGCCAUAGCUGGAGUAAACUAUGCAGCCUGUAGCUCCACCUGAGAAGGUGUAAAAAA",
+    db  = "..........(((((.........((.(((((.((.....))))))))))))))......(((((....)))))......."
+  ),
+  ZIKV = list(
+    pos_start = 25,
+    seq = "AGCUCAUAGUCAGGCCGAGAACGCCAUGGCACGGAAGAAGCCAUGCUGCCUGUGAGCCCCUCAGAGGACACUGAGUCAAAAAA",
+    db  = "..........(((((((....)).((((((.........))))))..))))).......(((((......)))))........"
+  )
+)
+```
+
+```{r}
+# input loading 
+read_inputs <- function(counts_path, meta_path) {
+  cts_df  <- read.csv(counts_path, check.names = FALSE)
+  meta_df <- read.csv(meta_path, check.names = FALSE)
+
+  cts <- cts_df %>%
+    tibble::column_to_rownames("feature") %>%
+    as.matrix()
+
+  meta <- meta_df %>%
+    tibble::column_to_rownames("sample")
+
+  cts <- cts[, rownames(meta), drop = FALSE]
+
+  meta$condition <- factor(meta$condition, levels = c("R", "X"))
+  meta$replicate <- factor(meta$replicate)
+  meta$virus     <- factor(meta$virus)
+
+  list(cts = cts, meta = meta)
+}
+
+inp <- read_inputs(COUNTS_PATH, META_PATH)
+cts <- inp$cts
+meta <- inp$meta
+
+table(meta$virus, meta$condition)
+table(meta$virus, meta$replicate, meta$condition)
+```
+
+```{r}
+# DESeq2 helpers
+restrict_counts_to_window <- function(cts_mat, pos_min, pos_max) {
+  pos <- as.integer(sub("_.*$", "", rownames(cts_mat)))
+  keep <- pos >= pos_min & pos <= pos_max
+  cts_mat[keep, , drop = FALSE]
+}
+
+run_deseq_for_virus <- function(virus_name, cts, meta, pos_min, pos_max, min_total_counts = 10) {
+  m <- meta[meta$virus == virus_name, , drop = FALSE]
+  c <- cts[, rownames(m), drop = FALSE]
+
+  c <- restrict_counts_to_window(c, pos_min, pos_max)
+  c <- c[rowSums(c) >= min_total_counts, , drop = FALSE]
+
+  dds <- DESeqDataSetFromMatrix(
+    countData = round(c),
+    colData   = m,
+    design    = ~ replicate + condition
+  )
+
+  dds <- DESeq(dds)
+  res <- results(dds, contrast = c("condition", "X", "R"))
+
+  res_df <- as.data.frame(res)
+  res_df$feature <- rownames(res_df)
+
+  res_df %>%
+    as_tibble() %>%
+    tidyr::separate(feature, into = c("pos", "change"), sep = "_", remove = FALSE) %>%
+    mutate(
+      pos = as.integer(pos),
+      neglog10padj = -log10(padj),
+      neglog10padj = ifelse(is.finite(neglog10padj), neglog10padj, NA_real_),
+      neglog10padj_cap = pmin(neglog10padj, 10)
+    ) %>%
+    select(
+      feature, pos, change,
+      baseMean, log2FoldChange, lfcSE, stat, pvalue, padj,
+      neglog10padj, neglog10padj_cap
+    )
+}
+
+save_tsv <- function(df, path) readr::write_tsv(df, path)
+```
+
+```{r}
+# DESeq2 analysis
+zikv_res <- run_deseq_for_virus(
+  virus_name = "ZIKV",
+  cts = cts,
+  meta = meta,
+  pos_min = WINDOWS$ZIKV[1],
+  pos_max = WINDOWS$ZIKV[2],
+  min_total_counts = 10
+)
+
+denv_res <- run_deseq_for_virus(
+  virus_name = "DENV",
+  cts = cts,
+  meta = meta,
+  pos_min = WINDOWS$DENV[1],
+  pos_max = WINDOWS$DENV[2],
+  min_total_counts = 10
+)
+
+cat("ZIKV features:", nrow(zikv_res), "\n")
+cat("DENV features:", nrow(denv_res), "\n")
+
+save_tsv(zikv_res, file.path(OUTDIR, "ZIKV_DESeq2_results.tsv"))
+save_tsv(denv_res, file.path(OUTDIR, "DENV_DESeq2_results.tsv"))
+```
+
+```{r}
+# Bubble plot styling
+plot_bubble_circles <- function(res_df, title, out_pdf) {
+  p <- ggplot(res_df, aes(x = pos, y = log2FoldChange)) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_point(
+      aes(size = neglog10padj_cap, color = change),
+      shape = 16,
+      alpha = 0.75
+    ) +
+    scale_size_continuous(name = "-log10(padj) (cap=10)") +
+    labs(title = title, x = "Position", y = "log2FoldChange (X/R)", color = "Mutation") +
+    theme_classic()
+
+  ggsave(out_pdf, p, width = 12, height = 4)
+  p
+}
+
+p_zikv_bubble <- plot_bubble_circles(
+  zikv_res,
+  title = "ZIKV: X vs R (pos 25–107)",
+  out_pdf = file.path(OUTDIR, "ZIKV_bubbleplot_circles.pdf")
+)
+
+p_denv_bubble <- plot_bubble_circles(
+  denv_res,
+  title = "DENV: X vs R (pos 24–104)",
+  out_pdf = file.path(OUTDIR, "DENV_bubbleplot_circles.pdf")
+)
+
+p_zikv_bubble
+p_denv_bubble
+```
+
+```{r}
+plot_bubble_effect_gradient <- function(res_df, title, out_pdf) {
+  p <- ggplot(res_df, aes(x = pos, y = log2FoldChange)) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_point(
+      aes(size = neglog10padj_cap, color = log2FoldChange),
+      shape = 16,
+      alpha = 0.75
+    ) +
+    scale_size_continuous(name = "-log10(padj) (cap=10)") +
+    labs(title = title, x = "Position", y = "log2FoldChange (X/R)", color = "log2FC") +
+    theme_classic()
+
+  ggsave(out_pdf, p, width = 12, height = 4)
+  p
+}
+
+plot_bubble_effect_gradient(
+  zikv_res,
+  title = "ZIKV: X vs R (pos 25–107)",
+  out_pdf = file.path(OUTDIR, "ZIKV_bubbleplot_effect_gradient.pdf")
+)
+```
+
+
+```{r}
+# Structure annotation: paired vs unpaired
+make_paired_df <- function(pos_start, seq_rna, dotbracket) {
+  stopifnot(nchar(seq_rna) == nchar(dotbracket))
+  tibble(
+    pos = pos_start:(pos_start + nchar(seq_rna) - 1),
+    paired = strsplit(dotbracket, "")[[1]] %in% c("(", ")")
+  )
+}
+
+zikv_paired_df <- make_paired_df(STRUCT$ZIKV$pos_start, STRUCT$ZIKV$seq, STRUCT$ZIKV$db)
+denv_paired_df <- make_paired_df(STRUCT$DENV$pos_start, STRUCT$DENV$seq, STRUCT$DENV$db)
+
+zikv_annot <- zikv_res %>% left_join(zikv_paired_df, by = "pos")
+denv_annot <- denv_res %>% left_join(denv_paired_df, by = "pos")
+
+zikv_summary <- zikv_annot %>% group_by(paired) %>%
+  summarize(median_lfc = median(log2FoldChange, na.rm=TRUE), n=n(), .groups="drop")
+
+denv_summary <- denv_annot %>% group_by(paired) %>%
+  summarize(median_lfc = median(log2FoldChange, na.rm=TRUE), n=n(), .groups="drop")
+
+zikv_summary
+denv_summary
+
+zikv_w <- wilcox.test(log2FoldChange ~ paired, data = zikv_annot)
+denv_w <- wilcox.test(log2FoldChange ~ paired, data = denv_annot)
+
+zikv_w
+denv_w
+
+save_tsv(zikv_annot, file.path(OUTDIR, "ZIKV_annot_paired.tsv"))
+save_tsv(denv_annot, file.path(OUTDIR, "DENV_annot_paired.tsv"))
+
+save_tsv(zikv_summary, file.path(OUTDIR, "ZIKV_paired_medians.tsv"))
+save_tsv(denv_summary, file.path(OUTDIR, "DENV_paired_medians.tsv"))
+
+save_tsv(tibble(virus="ZIKV", W=unname(zikv_w$statistic), p_value=zikv_w$p.value),
+         file.path(OUTDIR, "ZIKV_paired_wilcox.tsv"))
+save_tsv(tibble(virus="DENV", W=unname(denv_w$statistic), p_value=denv_w$p.value),
+         file.path(OUTDIR, "DENV_paired_wilcox.tsv"))
+```
+
+```{r}
+plot_paired_box <- function(df, title, out_pdf) {
+  p <- ggplot(df, aes(x = paired, y = log2FoldChange)) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_boxplot(outlier.alpha = 0.2) +
+    theme_classic() +
+    labs(title = title, x = "Paired?", y = "log2FC (X/R)")
+
+  ggsave(out_pdf, p, width = 5, height = 4)
+  p
+}
+
+plot_paired_box(zikv_annot, "ZIKV: paired vs unpaired", file.path(OUTDIR, "ZIKV_paired_vs_unpaired_boxplot.pdf"))
+plot_paired_box(denv_annot, "DENV: paired vs unpaired", file.path(OUTDIR, "DENV_paired_vs_unpaired_boxplot.pdf"))
+```
+
+
+```{r}
+# per-position sensitivity map
+position_summary <- function(res_df) {
+  res_df %>%
+    group_by(pos) %>%
+    summarize(
+      median_lfc = median(log2FoldChange, na.rm = TRUE),
+      min_lfc = min(log2FoldChange, na.rm = TRUE),
+      max_lfc = max(log2FoldChange, na.rm = TRUE),
+      n = n(),
+      .groups = "drop"
+    )
+}
+
+zikv_pos <- position_summary(zikv_res) %>% left_join(zikv_paired_df, by="pos")
+denv_pos <- position_summary(denv_res) %>% left_join(denv_paired_df, by="pos")
+
+plot_pos_sensitivity <- function(df, title, out_pdf) {
+  p <- ggplot(df, aes(x = pos, y = median_lfc)) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_point(aes(alpha = paired), shape = 16) +
+    theme_classic() +
+    labs(title = title, x = "Position", y = "Median log2FC (X/R)")
+  ggsave(out_pdf, p, width = 10, height = 3.5)
+  p
+}
+
+plot_pos_sensitivity(zikv_pos, "ZIKV: per-position median effect", file.path(OUTDIR, "ZIKV_position_sensitivity.pdf"))
+plot_pos_sensitivity(denv_pos, "DENV: per-position median effect", file.path(OUTDIR, "DENV_position_sensitivity.pdf"))
+
+save_tsv(zikv_pos, file.path(OUTDIR, "ZIKV_position_sensitivity.tsv"))
+save_tsv(denv_pos, file.path(OUTDIR, "DENV_position_sensitivity.tsv"))
+```
+
+```{r}
+# check outputs 
+list.files(OUTDIR, full.names = TRUE)
+```
+# Dot bracket overlay 
+```{r}
+library(tidyverse)
+library(ggplot2)
+
+# Optional but very convenient for stacking plots
+# If not installed: install.packages("patchwork")
+library(patchwork)
+
+make_struct_track_df <- function(pos_start, seq_rna, dotbracket) {
+  stopifnot(nchar(seq_rna) == nchar(dotbracket))
+
+  tibble(
+    pos = pos_start:(pos_start + nchar(seq_rna) - 1),
+    base = strsplit(seq_rna, "")[[1]],
+    db   = strsplit(dotbracket, "")[[1]]
+  )
+}
+
+plot_structure_track <- function(track_df, title = NULL, label_every = 5) {
+  # Position labels only at chosen interval
+  labs_df <- track_df %>%
+    mutate(show = (pos - min(pos)) %% label_every == 0)
+
+  ggplot() +
+    # dot-bracket row
+    geom_text(
+      data = track_df,
+      aes(x = pos, y = 0, label = db),
+      size = 3
+    ) +
+    # sequence row
+    geom_text(
+      data = track_df,
+      aes(x = pos, y = -1, label = base),
+      size = 3
+    ) +
+    # position labels row (sparser)
+    geom_text(
+      data = labs_df %>% filter(show),
+      aes(x = pos, y = 1, label = pos),
+      size = 2.8
+    ) +
+    coord_cartesian(clip = "off") +
+    scale_y_continuous(breaks = c(1, 0, -1), labels = c("pos", "db", "seq")) +
+    labs(title = title, x = NULL, y = NULL) +
+    theme_classic() +
+    theme(
+      axis.line.y = element_blank(),
+      axis.ticks.y = element_blank(),
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      plot.margin = margin(5.5, 5.5, 5.5, 5.5),
+      plot.title = element_text(size = 11)
+    )
+}
+
+position_summary <- function(res_df) {
+  res_df %>%
+    group_by(pos) %>%
+    summarize(
+      median_lfc = median(log2FoldChange, na.rm = TRUE),
+      n = n(),
+      .groups = "drop"
+    )
+}
+
+plot_pos_sensitivity <- function(pos_df, paired_df = NULL, title = NULL) {
+  df <- pos_df
+  if (!is.null(paired_df)) df <- df %>% left_join(paired_df, by = "pos")
+
+  ggplot(df, aes(x = pos, y = median_lfc)) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_point(aes(alpha = paired), shape = 16) +
+    scale_alpha_manual(values = c(`TRUE` = 1, `FALSE` = 0.35), na.value = 0.6, guide = "none") +
+    theme_classic() +
+    labs(title = title, x = "Position", y = "Median log2FC (X/R)")
+}
+
+# Build track dataframes from STRUCT
+denv_track <- make_struct_track_df(STRUCT$DENV$pos_start, STRUCT$DENV$seq, STRUCT$DENV$db)
+zikv_track <- make_struct_track_df(STRUCT$ZIKV$pos_start, STRUCT$ZIKV$seq, STRUCT$ZIKV$db)
+
+# Build paired/unpaired lookup from dot-bracket
+denv_paired <- denv_track %>% transmute(pos, paired = db %in% c("(", ")"))
+zikv_paired <- zikv_track %>% transmute(pos, paired = db %in% c("(", ")"))
+
+# Build per-position summaries from DESeq2 results already in memory
+denv_pos <- position_summary(denv_res)
+zikv_pos <- position_summary(zikv_res)
+
+# Make stacked plots: effect on top, structure underneath
+p_denv <- plot_pos_sensitivity(denv_pos, denv_paired, title = "DENV: per-position effect with structure track") /
+  plot_structure_track(denv_track, title = NULL, label_every = 5) +
+  plot_layout(heights = c(2.2, 1))
+
+p_zikv <- plot_pos_sensitivity(zikv_pos, zikv_paired, title = "ZIKV: per-position effect with structure track") /
+  plot_structure_track(zikv_track, title = NULL, label_every = 5) +
+  plot_layout(heights = c(2.2, 1))
+
+p_denv
+p_zikv
+
+# Save to PDF
+ggsave(file.path(OUTDIR, "DENV_structure_overlay.pdf"), p_denv, width = 12, height = 5)
+ggsave(file.path(OUTDIR, "ZIKV_structure_overlay.pdf"), p_zikv, width = 12, height = 5)
+```
+# New workflow with minimal element 
+### prevent sequencing/alignment artifacts due to the 5' extremity of the Xrn1-treated sample. (The high dot is probably the stop site!)
+### due to Xrn1 stop site, mutations near the dominant 5′ end become artificially enriched in X samples.Avoid by starting at minimal element, paste the annotated stop site. 
+### Try end-to-end alignment instead of local, but have to remove the 5' Nmer added by ligation. 
+```{r}
+MIN_WINDOWS <- list(
+  DENV = c(28, 104),  # minimal element starts at 28
+  ZIKV = c(29, 107)   # minimal element starts at 29
+)
+
+# Slice the structure strings to match the minimal window
+slice_struct <- function(pos_start_full, seq_full, db_full, new_start, new_end) {
+  full_end <- pos_start_full + nchar(seq_full) - 1
+  stopifnot(new_start >= pos_start_full, new_end <= full_end)
+
+  i1 <- new_start - pos_start_full + 1
+  i2 <- new_end   - pos_start_full + 1
+
+  list(
+    pos_start = new_start,
+    seq = substr(seq_full, i1, i2),
+    db  = substr(db_full,  i1, i2)
+  )
+}
+
+STRUCT_MIN <- list(
+  DENV = slice_struct(STRUCT$DENV$pos_start, STRUCT$DENV$seq, STRUCT$DENV$db,
+                      new_start = MIN_WINDOWS$DENV[1], new_end = MIN_WINDOWS$DENV[2]),
+  ZIKV = slice_struct(STRUCT$ZIKV$pos_start, STRUCT$ZIKV$seq, STRUCT$ZIKV$db,
+                      new_start = MIN_WINDOWS$ZIKV[1], new_end = MIN_WINDOWS$ZIKV[2])
+)
+
+# Re-run DESeq2 restricted to minimal windows (keeps replicate blocking)
+zikv_res_min <- run_deseq_for_virus(
+  virus_name = "ZIKV",
+  cts = cts,
+  meta = meta,
+  pos_min = MIN_WINDOWS$ZIKV[1],
+  pos_max = MIN_WINDOWS$ZIKV[2],
+  min_total_counts = 10
+)
+
+denv_res_min <- run_deseq_for_virus(
+  virus_name = "DENV",
+  cts = cts,
+  meta = meta,
+  pos_min = MIN_WINDOWS$DENV[1],
+  pos_max = MIN_WINDOWS$DENV[2],
+  min_total_counts = 10
+)
+
+save_tsv(zikv_res_min, file.path(OUTDIR, "ZIKV_DESeq2_results_minimal.tsv"))
+save_tsv(denv_res_min, file.path(OUTDIR, "DENV_DESeq2_results_minimal.tsv"))
+```
+# plot 
+```{r}
+p_zikv_bubble_min <- plot_bubble_circles(
+  zikv_res_min,
+  title = "ZIKV: X vs R (minimal element)",
+  out_pdf = file.path(OUTDIR, "ZIKV_bubbleplot_minimal_circles.pdf")
+)
+
+p_denv_bubble_min <- plot_bubble_circles(
+  denv_res_min,
+  title = "DENV: X vs R (minimal element)",
+  out_pdf = file.path(OUTDIR, "DENV_bubbleplot_minimal_circles.pdf")
+)
+
+p_zikv_bubble_min
+p_denv_bubble_min
+```
+```{r}
+# version of plot with base-specific colors: 
+
+plot_bubble_circles <- function(res_df, title, out_pdf) {
+
+  df <- res_df %>%
+    mutate(
+      mutant_base = sub(".*>", "", change),
+      mutant_base = gsub("T", "U", mutant_base)  # RNA alphabet
+    )
+
+  base_colors <- c(
+    A = "#2ca25f",   # green
+    U = "#de2d26",   # red
+    C = "#fdae6b",   # orange
+    G = "#3182bd"    # blue
+  )
+
+  p <- ggplot(df, aes(x = pos, y = log2FoldChange)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+    geom_point(
+      aes(
+        size = neglog10padj_cap,
+        fill = mutant_base
+      ),
+      shape = 21,
+      color = "black",
+      stroke = 0.2,
+      alpha = 0.9
+    ) +
+    scale_fill_manual(
+    values = base_colors,
+    breaks = c("A","U","C","G"),
+    name = "Mutant base"
+     ) +
+    scale_size_continuous(
+      name = "-log10(padj)",
+      range = c(1.5, 6)
+    ) +
+    theme_classic() +
+    labs(
+      title = title,
+      x = "Position",
+      y = "log2FoldChange (X/R)"
+    ) +
+    theme(
+      legend.position = "right",
+      plot.title = element_text(size = 12)
+    )
+
+  ggsave(out_pdf, p, width = 12, height = 4)
+  p
+}
+```
+
+```{r}
+# plot
+p_zikv_bubble_min <- plot_bubble_circles(
+  zikv_res_min,
+  title = "ZIKV: X vs R (minimal element)",
+  out_pdf = file.path(OUTDIR, "ZIKV_bubbleplot_minimal_circles.pdf")
+)
+
+p_denv_bubble_min <- plot_bubble_circles(
+  denv_res_min,
+  title = "DENV: X vs R (minimal element)",
+  out_pdf = file.path(OUTDIR, "DENV_bubbleplot_minimal_circles.pdf")
+)
+
+p_zikv_bubble_min
+p_denv_bubble_min
+```
+
+
+# Structure overlay 
+```{r}
+denv_track_min <- make_struct_track_df(STRUCT_MIN$DENV$pos_start, STRUCT_MIN$DENV$seq, STRUCT_MIN$DENV$db)
+zikv_track_min <- make_struct_track_df(STRUCT_MIN$ZIKV$pos_start, STRUCT_MIN$ZIKV$seq, STRUCT_MIN$ZIKV$db)
+
+denv_paired_min <- denv_track_min %>% transmute(pos, paired = db %in% c("(", ")"))
+zikv_paired_min <- zikv_track_min %>% transmute(pos, paired = db %in% c("(", ")"))
+
+denv_pos_min <- position_summary(denv_res_min)
+zikv_pos_min <- position_summary(zikv_res_min)
+
+p_denv_min <- plot_pos_sensitivity(denv_pos_min, denv_paired_min,
+                                  title = "DENV: minimal element effect + structure") /
+  plot_structure_track(denv_track_min, label_every = 5) +
+  plot_layout(heights = c(2.2, 1))
+
+p_zikv_min <- plot_pos_sensitivity(zikv_pos_min, zikv_paired_min,
+                                  title = "ZIKV: minimal element effect + structure") /
+  plot_structure_track(zikv_track_min, label_every = 5) +
+  plot_layout(heights = c(2.2, 1))
+
+p_denv_min
+p_zikv_min
+
+ggsave(file.path(OUTDIR, "DENV_structure_overlay_minimal.pdf"), p_denv_min, width = 12, height = 5)
+ggsave(file.path(OUTDIR, "ZIKV_structure_overlay_minimal.pdf"), p_zikv_min, width = 12, height = 5)
+```
+
+# checks to confirm Xrn1 stop sites cause L2FC artifact
+```{r}
+denv_res %>% filter(pos %in% 24:30) %>% arrange(pos, padj) %>% select(pos, change, log2FoldChange, padj) %>% head(30)
+
+zikv_res %>% filter(pos %in% 25:31) %>% arrange(pos, padj) %>% select(pos, change, log2FoldChange, padj) %>% head(30)
+
+# extremely large positive log2FC
+
+# multiple substitutions at the same site behave similarly
+
+# happens at the very beginning of the analyzed region
+
+# appears in both viruses
+
+# plot to show boundaries artifact zone vs. structured xrRNA
+
+# observe huge spike (minimal element start) then sharp drop then stable region
+
+denv_res %>%
+  group_by(pos) %>%
+  summarize(median_lfc = median(log2FoldChange)) %>%
+  ggplot(aes(pos, median_lfc)) +
+  geom_line() +
+  geom_vline(xintercept = 28, linetype="dashed", color="red") +
+  theme_classic()
+
+
+# keep analysis in this region: DENV: 28–104 ; ZIKV: 29–107
+
+
+```
+
+# New bubble plot with the structure overlay: 
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(patchwork)
+
+# Bubble plot (mutant base colors) – returns a ggplot object, does not save by itself
+plot_bubble_mutbase <- function(res_df, title = NULL) {
+  df <- res_df %>%
+    mutate(
+      mutant_base = sub(".*>", "", change),
+      mutant_base = gsub("T", "U", mutant_base)
+    )
+
+  base_colors <- c(
+    A = "#2ca25f",  # green
+    U = "#de2d26",  # red
+    C = "#fdae6b",  # orange
+    G = "#3182bd"   # blue
+  )
+
+  ggplot(df, aes(x = pos, y = log2FoldChange)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+    geom_point(
+      aes(size = neglog10padj_cap, fill = mutant_base),
+      shape = 21, color = "black", stroke = 0.2, alpha = 0.9
+    ) +
+    scale_fill_manual(values = base_colors, breaks = c("A","U","C","G"), name = "Mutant base") +
+    scale_size_continuous(name = "-log10(padj)", range = c(1.5, 6)) +
+    theme_classic() +
+    labs(title = title, x = NULL, y = "log2FoldChange (X/R)") +
+    theme(
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      plot.title = element_text(size = 12)
+    )
+}
+
+# Build a structure track dataframe for a window
+make_struct_track_df <- function(pos_start, seq_rna, dotbracket) {
+  stopifnot(nchar(seq_rna) == nchar(dotbracket))
+  tibble(
+    pos = pos_start:(pos_start + nchar(seq_rna) - 1),
+    base = strsplit(seq_rna, "")[[1]],
+    db   = strsplit(dotbracket, "")[[1]]
+  )
+}
+
+# Plot: position labels + dot-bracket + sequence aligned on x=pos
+plot_structure_track <- function(track_df, label_every = 5) {
+  labs_df <- track_df %>%
+    mutate(show = (pos - min(pos)) %% label_every == 0)
+
+  ggplot() +
+    geom_text(data = track_df, aes(x = pos, y = 0,  label = db),   size = 3) +
+    geom_text(data = track_df, aes(x = pos, y = -1, label = base), size = 3) +
+    geom_text(data = labs_df %>% filter(show), aes(x = pos, y = 1, label = pos), size = 2.8) +
+    scale_y_continuous(breaks = c(1, 0, -1), labels = c("pos", "db", "seq")) +
+    theme_classic() +
+    labs(x = "Position", y = NULL) +
+    theme(
+      axis.line.y = element_blank(),
+      axis.ticks.y = element_blank(),
+      plot.margin = margin(5.5, 5.5, 5.5, 5.5)
+    )
+}
+
+# Combine bubble + structure into one figure and save
+make_bubble_with_track <- function(res_df, pos_start, seq_rna, dotbracket, title, out_pdf, label_every = 5) {
+  track_df <- make_struct_track_df(pos_start, seq_rna, dotbracket)
+
+  p1 <- plot_bubble_mutbase(res_df, title = title)
+  p2 <- plot_structure_track(track_df, label_every = label_every)
+
+  combined <- p1 / p2 + plot_layout(heights = c(2.4, 1))
+  ggsave(out_pdf, combined, width = 12, height = 5)
+  combined
+}
+
+# DENV minimal element stacked plot
+p_denv_stack <- make_bubble_with_track(
+  res_df = denv_res_min,
+  pos_start = STRUCT_MIN$DENV$pos_start,
+  seq_rna = STRUCT_MIN$DENV$seq,
+  dotbracket = STRUCT_MIN$DENV$db,
+  title = "DENV: X vs R (minimal element) with structure track",
+  out_pdf = file.path(OUTDIR, "DENV_bubble_minimal_with_structure.pdf"),
+  label_every = 5
+)
+
+# ZIKV minimal element stacked plot
+p_zikv_stack <- make_bubble_with_track(
+  res_df = zikv_res_min,
+  pos_start = STRUCT_MIN$ZIKV$pos_start,
+  seq_rna = STRUCT_MIN$ZIKV$seq,
+  dotbracket = STRUCT_MIN$ZIKV$db,
+  title = "ZIKV: X vs R (minimal element) with structure track",
+  out_pdf = file.path(OUTDIR, "ZIKV_bubble_minimal_with_structure.pdf"),
+  label_every = 5
+)
+
+p_denv_stack
+p_zikv_stack
+```
+# Try horizontal expansion of the plot: 
+```{r}
+# wider bubble+structure overlays
+
+
+library(tidyverse)
+library(ggplot2)
+library(patchwork)
+
+plot_bubble_mutbase_wide <- function(res_df, title = NULL) {
+  df <- res_df %>%
+    mutate(
+      mutant_base = sub(".*>", "", change),
+      mutant_base = gsub("T", "U", mutant_base)
+    )
+
+  base_colors <- c(
+    A = "#2ca25f",  # green
+    U = "#de2d26",  # red
+    C = "#fdae6b",  # orange
+    G = "#3182bd"   # blue
+  )
+
+  ggplot(df, aes(x = pos, y = log2FoldChange)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+    geom_point(
+      aes(size = neglog10padj_cap, fill = mutant_base),
+      shape = 21, color = "black", stroke = 0.2, alpha = 0.9
+    ) +
+    scale_fill_manual(values = base_colors, breaks = c("A","U","C","G"), name = "Mutant base") +
+    scale_size_continuous(name = "-log10(padj)", range = c(1.2, 5.5)) +
+    scale_x_continuous(expand = expansion(add = c(1, 1))) +
+    theme_classic() +
+    labs(title = title, x = NULL, y = "log2FoldChange (X/R)") +
+    theme(
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      plot.title = element_text(size = 12)
+    )
+}
+
+make_struct_track_df_wide <- function(pos_start, seq_rna, dotbracket) {
+  stopifnot(nchar(seq_rna) == nchar(dotbracket))
+  tibble(
+    pos = pos_start:(pos_start + nchar(seq_rna) - 1),
+    base = strsplit(seq_rna, "")[[1]],
+    db   = strsplit(dotbracket, "")[[1]]
+  )
+}
+
+plot_structure_track_wide <- function(track_df, label_every = 5) {
+  labs_df <- track_df %>%
+    mutate(show = (pos - min(pos)) %% label_every == 0)
+
+  ggplot() +
+    geom_text(data = track_df, aes(x = pos, y = 0,  label = db),   size = 3.3) +
+    geom_text(data = track_df, aes(x = pos, y = -1, label = base), size = 3.3) +
+    geom_text(
+      data = labs_df %>% filter(show),
+      aes(x = pos, y = 1, label = pos),
+      size = 2.8
+    ) +
+    scale_x_continuous(expand = expansion(add = c(1, 1))) +
+    scale_y_continuous(breaks = c(1, 0, -1), labels = c("pos", "db", "seq")) +
+    theme_classic() +
+    labs(x = "Position", y = NULL) +
+    theme(
+      axis.line.y = element_blank(),
+      axis.ticks.y = element_blank(),
+      plot.margin = margin(6, 6, 6, 6)
+    )
+}
+
+make_bubble_with_track_wide <- function(res_df,
+                                       pos_start, seq_rna, dotbracket,
+                                       title, out_pdf,
+                                       label_every = 5,
+                                       width = 18, height = 5) {
+
+  track_df <- make_struct_track_df_wide(pos_start, seq_rna, dotbracket)
+
+  p_top <- plot_bubble_mutbase_wide(res_df, title = title)
+  p_bot <- plot_structure_track_wide(track_df, label_every = label_every)
+
+  combined <- p_top / p_bot + plot_layout(heights = c(2.4, 1))
+
+  ggsave(out_pdf, combined, width = width, height = height)
+  combined
+}
+
+# Calls for minimal windows (works with existing objects: denv_res_min, zikv_res_min, STRUCT_MIN, OUTDIR)
+
+p_denv_stack_wide <- make_bubble_with_track_wide(
+  res_df = denv_res_min,
+  pos_start = STRUCT_MIN$DENV$pos_start,
+  seq_rna = STRUCT_MIN$DENV$seq,
+  dotbracket = STRUCT_MIN$DENV$db,
+  title = "DENV: X vs R (minimal element) with structure track",
+  out_pdf = file.path(OUTDIR, "DENV_bubble_minimal_with_structure_WIDE.pdf"),
+  label_every = 5,
+  width = 20, height = 5
+)
+
+p_zikv_stack_wide <- make_bubble_with_track_wide(
+  res_df = zikv_res_min,
+  pos_start = STRUCT_MIN$ZIKV$pos_start,
+  seq_rna = STRUCT_MIN$ZIKV$seq,
+  dotbracket = STRUCT_MIN$ZIKV$db,
+  title = "ZIKV: X vs R (minimal element) with structure track",
+  out_pdf = file.path(OUTDIR, "ZIKV_bubble_minimal_with_structure_WIDE.pdf"),
+  label_every = 5,
+  width = 20, height = 5
+)
+
+p_denv_stack_wide
+p_zikv_stack_wide
+```
+# bubble plot with edits newest version
+```{r}
+# wider bubble + structure overlays WITH GRIDLINES
+
+library(tidyverse)
+library(ggplot2)
+library(patchwork)
+
+plot_bubble_mutbase_wide <- function(res_df, title = NULL) {
+
+  df <- res_df %>%
+    mutate(
+      mutant_base = sub(".*>", "", change),
+      mutant_base = gsub("T", "U", mutant_base)
+    )
+
+  base_colors <- c(
+    A = "#2ca25f",  # green
+    U = "#de2d26",  # red
+    C = "#fdae6b",  # orange
+    G = "#3182bd"   # blue
+  )
+
+  xpos <- seq(min(df$pos), max(df$pos), by = 1)
+
+  ggplot(df, aes(x = pos, y = log2FoldChange)) +
+
+    geom_hline(yintercept = 0,
+               linetype = "dashed",
+               color = "black",
+               linewidth = 0.3) +
+
+    geom_point(
+      aes(size = neglog10padj_cap, fill = mutant_base),
+      shape = 21,
+      color = "black",
+      stroke = 0.2,
+      alpha = 0.9
+    ) +
+
+    scale_fill_manual(
+      values = base_colors,
+      breaks = c("A","U","C","G"),
+      name = "Mutant base"
+    ) +
+
+    scale_size_continuous(
+      name = "-log10(padj)",
+      range = c(1.2, 5.5)
+    ) +
+
+    scale_x_continuous(
+      breaks = xpos,
+      expand = expansion(add = c(1,1))
+    ) +
+
+    theme_classic() +
+
+    labs(
+      title = title,
+      x = NULL,
+      y = "log2FoldChange (X/R)"
+    ) +
+
+    theme(
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      plot.title = element_text(size = 12),
+
+      # gridlines
+      panel.grid.major.x = element_line(color = "grey85", linewidth = 0.3),
+      panel.grid.minor.x = element_blank(),
+      panel.grid.major.y = element_line(color = "grey88", linewidth = 0.3),
+      panel.grid.minor.y = element_blank(),
+
+      panel.background = element_blank()
+    )
+}
+
+
+
+make_struct_track_df_wide <- function(pos_start, seq_rna, dotbracket) {
+
+  stopifnot(nchar(seq_rna) == nchar(dotbracket))
+
+  tibble(
+    pos = pos_start:(pos_start + nchar(seq_rna) - 1),
+    base = strsplit(seq_rna, "")[[1]],
+    db   = strsplit(dotbracket, "")[[1]]
+  )
+}
+
+
+
+plot_structure_track_wide <- function(track_df, label_every = 5) {
+
+  labs_df <- track_df %>%
+    mutate(show = (pos - min(pos)) %% label_every == 0)
+
+  # gridlines every nucleotide (major x grid)
+  xpos_grid <- seq(min(track_df$pos), max(track_df$pos), by = 1)
+
+  ggplot() +
+    geom_text(data = track_df,
+              aes(x = pos, y = 0, label = db),
+              size = 3.3) +
+    geom_text(data = track_df,
+              aes(x = pos, y = -1, label = base),
+              size = 3.3) +
+    geom_text(
+      data = labs_df %>% filter(show),
+      aes(x = pos, y = 1, label = pos),
+      size = 2.8
+    ) +
+
+    # Keep breaks at every nt to get vertical gridlines
+    scale_x_continuous(
+      breaks = xpos_grid,
+      expand = expansion(add = c(1,1))
+    ) +
+
+    scale_y_continuous(
+      breaks = c(1,0,-1),
+      labels = c("pos","db","seq")
+    ) +
+
+    theme_classic() +
+    labs(x = "Position", y = NULL) +
+
+    theme(
+      axis.line.y = element_blank(),
+      axis.ticks.y = element_blank(),
+
+      # remove axis x labels/ticks so they don't overlap
+      axis.text.x  = element_blank(),
+      axis.ticks.x = element_blank(),
+
+      # gridlines match top panel
+      panel.grid.major.x = element_line(color = "grey85", linewidth = 0.3),
+      panel.grid.major.y = element_blank(),
+
+      plot.margin = margin(6,6,6,6)
+    )
+}
+
+
+
+make_bubble_with_track_wide <- function(res_df,
+                                       pos_start,
+                                       seq_rna,
+                                       dotbracket,
+                                       title,
+                                       out_pdf,
+                                       label_every = 5,
+                                       width = 18,
+                                       height = 5) {
+
+  track_df <- make_struct_track_df_wide(
+    pos_start,
+    seq_rna,
+    dotbracket
+  )
+
+  p_top <- plot_bubble_mutbase_wide(res_df, title)
+  p_bot <- plot_structure_track_wide(track_df, label_every)
+
+  combined <- p_top / p_bot +
+    plot_layout(heights = c(2.4, 1))
+
+  ggsave(out_pdf, combined, width = width, height = height)
+
+  combined
+}
+
+
+# Calls (unchanged) 
+
+p_denv_stack_wide <- make_bubble_with_track_wide(
+  res_df = denv_res_min,
+  pos_start = STRUCT_MIN$DENV$pos_start,
+  seq_rna = STRUCT_MIN$DENV$seq,
+  dotbracket = STRUCT_MIN$DENV$db,
+  title = "DENV: X vs R (minimal element) with structure track",
+  out_pdf = file.path(OUTDIR,
+                      "DENV_bubble_minimal_with_structure_WIDE.pdf"),
+  label_every = 5,
+  width = 20, height = 5
+)
+
+p_zikv_stack_wide <- make_bubble_with_track_wide(
+  res_df = zikv_res_min,
+  pos_start = STRUCT_MIN$ZIKV$pos_start,
+  seq_rna = STRUCT_MIN$ZIKV$seq,
+  dotbracket = STRUCT_MIN$ZIKV$db,
+  title = "ZIKV: X vs R (minimal element) with structure track",
+  out_pdf = file.path(OUTDIR,
+                      "ZIKV_bubble_minimal_with_structure_WIDE.pdf"),
+  label_every = 5,
+  width = 20, height = 5
+)
+
+p_denv_stack_wide
+p_zikv_stack_wide
+```
+
+# Read depth per mutation "feature"
+```{r}
+# Convert counts matrix into a tidy long format
+library(tidyverse)
+
+# counts matrix -> dataframe with feature column
+cts_df <- as.data.frame(cts) %>%
+  tibble::rownames_to_column("feature")
+
+# metadata -> dataframe with sample column
+meta_df <- meta %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("sample")
+
+# long format: mutation feature x sample
+cts_long <- cts_df %>%
+  pivot_longer(
+    -feature,
+    names_to = "sample",
+    values_to = "alt_depth"
+  ) %>%
+  left_join(meta_df, by = "sample") %>%
+  mutate(
+    pos = as.integer(sub("_.*", "", feature)),
+    change = sub(".*_", "", feature)
+  )
+
+head(cts_long)
+```
+
+
+```{r}
+# Distribution of read depth 
+ggplot(cts_long, aes(alt_depth)) +
+  geom_histogram(bins = 100) +
+  scale_x_log10() +
+  theme_classic() +
+  labs(
+    x = "Read depth per mutation (log10 scale)",
+    y = "Count",
+    title = "Distribution of mutation read depth"
+  )
+```
+
+```{r}
+ggplot(cts_long, aes(x = alt_depth)) +
+  geom_histogram(bins = 120) +
+  scale_x_log10() +
+  theme_classic() +
+  labs(
+    x = "Alt read depth per mutation feature (log10)",
+    y = "Number of (feature × sample) observations",
+    title = "Mutation feature depth distribution"
+  )
+```
+
+```{r}
+# Depth distribution separated by condition 
+ggplot(cts_long, aes(alt_depth, fill = condition)) +
+  geom_histogram(bins = 80, alpha = 0.6, position = "identity") +
+  scale_x_log10() +
+  theme_classic()
+# X axis = sequencing depth of a mutation instance
+# Y axis = How many mutation×replicate observations fall into that depth bin. e.g. frequency of mutations having that depth
+# far right peaks: mutations have high read depths supporting them , but are found less in XRN1-treated condition (Xrn1-treated is left-shifted)
+```
+
+
+```{r}
+# Replicate consistency 
+cts_long %>%
+  group_by(feature, condition) %>%
+  summarize(mean_depth = mean(alt_depth), .groups="drop") %>%
+  ggplot(aes(mean_depth)) +
+  geom_histogram(bins = 80) +
+  scale_x_log10() +
+  theme_classic() +
+  labs(title="Mean replicate depth per mutation")
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+

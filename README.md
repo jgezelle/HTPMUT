@@ -74,7 +74,7 @@ conda create -y -n viromelib -c conda-forge -c bioconda \
 ```bash
 # in viromelib conda env 
 conda install -c conda-forge ncbi-datasets-cli -y
-conda install -c bioconda bedtools
+conda install -c bioconda bedtools -y
 ```
 **now:** <br>
 ```bash
@@ -341,7 +341,264 @@ example output:
 260120-r0400-DX-02-A3499_R1.bowtie2.log:99.71% overall alignment rate
 260120-r0400-DX-03-A3484_R1.bowtie2.log:99.66% overall alignment rate
 ```
+# 04_align for leader-split reads 
+```bash
+ROOT=/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT
 
+TRIM="$ROOT/work/02_trim"        # trimmed FASTQs (HASLEAD + NOLEAD)
+REFDIR="$ROOT/data/refseqs"      # bowtie2 indexes
+ALIGN="$ROOT/work/04_align"
+
+mkdir -p "$ALIGN"
+cd "$ALIGN"
+```
+alignment loop for both leader-containing and no-lead samples after the leader-split step: <br>
+``` bash
+for READS in "$TRIM"/*.HASLEAD.fastq.gz "$TRIM"/*.NOLEAD.fastq.gz; do
+  [[ -e "$READS" ]] || continue
+
+  SAMPLE=$(basename "$READS" .fastq.gz)
+
+  # Choose reference by virus label in filename
+  if [[ "$SAMPLE" == *-Z* ]]; then
+    REF="$REFDIR/zikv_xr2_wt"
+  elif [[ "$SAMPLE" == *-D* ]]; then
+    REF="$REFDIR/denv_xr2_wt"
+  else
+    echo "Unknown virus for $SAMPLE — skipping"
+    continue
+  fi
+
+  echo "Aligning $SAMPLE"
+
+  bowtie2 \
+    -p 8 \
+    --very-sensitive-local \
+    -x "$REF" \
+    -U "$READS" \
+    2> "${SAMPLE}.bowtie2.log" \
+  | samtools view -bS - \
+  | samtools sort -o "${SAMPLE}.sorted.bam"
+
+  samtools index "${SAMPLE}.sorted.bam"
+
+  samtools flagstat "${SAMPLE}.sorted.bam" \
+    > "${SAMPLE}.flagstat.txt"
+done
+```
+```bash
+ grep "overall alignment rate" *.bowtie2.log
+```
+Note: current settings include NOLEAD for R and HASLEAD for X, which is not necessary to do and should have very minimal reads <br>
+```
+260120-r0399-ZR-01-A3483_R1.HASLEAD.bowtie2.log:99.92% overall alignment rate
+260120-r0399-ZR-01-A3483_R1.NOLEAD.bowtie2.log:98.18% overall alignment rate
+260120-r0399-ZR-01-A3483_R1.bowtie2.log:99.86% overall alignment rate
+260120-r0399-ZR-02-A3456_R1.HASLEAD.bowtie2.log:99.92% overall alignment rate
+260120-r0399-ZR-02-A3456_R1.NOLEAD.bowtie2.log:98.09% overall alignment rate
+260120-r0399-ZR-02-A3456_R1.bowtie2.log:99.87% overall alignment rate
+260120-r0399-ZR-03-A3451_R1.HASLEAD.bowtie2.log:99.91% overall alignment rate
+260120-r0399-ZR-03-A3451_R1.NOLEAD.bowtie2.log:98.22% overall alignment rate
+260120-r0399-ZR-03-A3451_R1.bowtie2.log:99.86% overall alignment rate
+260120-r0399-ZX-01-A3466_R1.HASLEAD.bowtie2.log:99.07% overall alignment rate
+260120-r0399-ZX-01-A3466_R1.NOLEAD.bowtie2.log:99.10% overall alignment rate
+260120-r0399-ZX-01-A3466_R1.bowtie2.log:99.09% overall alignment rate
+260120-r0399-ZX-02-A3452_R1.HASLEAD.bowtie2.log:98.98% overall alignment rate
+260120-r0399-ZX-02-A3452_R1.NOLEAD.bowtie2.log:99.18% overall alignment rate
+260120-r0399-ZX-02-A3452_R1.bowtie2.log:99.18% overall alignment rate
+260120-r0399-ZX-03-A3450_R1.HASLEAD.bowtie2.log:98.45% overall alignment rate
+260120-r0399-ZX-03-A3450_R1.NOLEAD.bowtie2.log:99.03% overall alignment rate
+260120-r0399-ZX-03-A3450_R1.bowtie2.log:99.01% overall alignment rate
+260120-r0400-DR-01-A3413_R1.HASLEAD.bowtie2.log:99.95% overall alignment rate
+260120-r0400-DR-01-A3413_R1.NOLEAD.bowtie2.log:98.54% overall alignment rate
+260120-r0400-DR-01-A3413_R1.bowtie2.log:99.92% overall alignment rate
+260120-r0400-DR-02-A3419_R1.HASLEAD.bowtie2.log:99.95% overall alignment rate
+260120-r0400-DR-02-A3419_R1.NOLEAD.bowtie2.log:98.42% overall alignment rate
+260120-r0400-DR-02-A3419_R1.bowtie2.log:99.91% overall alignment rate
+260120-r0400-DR-03-A3485_R1.HASLEAD.bowtie2.log:99.96% overall alignment rate
+260120-r0400-DR-03-A3485_R1.NOLEAD.bowtie2.log:98.25% overall alignment rate
+260120-r0400-DR-03-A3485_R1.bowtie2.log:99.89% overall alignment rate
+260120-r0400-DX-01-A3429_R1.HASLEAD.bowtie2.log:99.73% overall alignment rate
+260120-r0400-DX-01-A3429_R1.NOLEAD.bowtie2.log:99.74% overall alignment rate
+260120-r0400-DX-01-A3429_R1.bowtie2.log:99.74% overall alignment rate
+260120-r0400-DX-02-A3499_R1.HASLEAD.bowtie2.log:99.75% overall alignment rate
+260120-r0400-DX-02-A3499_R1.NOLEAD.bowtie2.log:99.71% overall alignment rate
+260120-r0400-DX-02-A3499_R1.bowtie2.log:99.71% overall alignment rate
+260120-r0400-DX-03-A3484_R1.HASLEAD.bowtie2.log:99.73% overall alignment rate
+260120-r0400-DX-03-A3484_R1.NOLEAD.bowtie2.log:99.66% overall alignment rate
+260120-r0400-DX-03-A3484_R1.bowtie2.log:99.66% overall alignment rate
+```
+# 05_readcount (with updates) 
+```bash
+ROOT=/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT
+
+ALIGN="$ROOT/work/04_align"          # where *.sorted.bam live
+OUT="$ROOT/work/05_readcount"        # output directory
+REFDIR="$ROOT/data/refseqs"          # fasta references (not bowtie2 indexes)
+
+mkdir -p "$OUT"
+```
+### loop: <br>
+```bash
+for BAM in "$ALIGN"/*.sorted.bam; do
+  [[ -e "$BAM" ]] || continue
+  BASE=$(basename "$BAM" .sorted.bam)
+
+  # Choose FASTA reference based on virus label in filename
+  if [[ "$BASE" == *-Z* ]]; then
+    REF="$REFDIR/zikv_xr2_wt.fa"
+  elif [[ "$BASE" == *-D* ]]; then
+    REF="$REFDIR/denv_xr2_wt.fa"
+  else
+    echo "Unknown sample: $BASE — skipping"
+    continue
+  fi
+
+  # Determine contig name + length from BAM index stats
+  IDXLINE=$(samtools idxstats "$BAM" | head -n 1)
+  CONTIG=$(echo "$IDXLINE" | cut -f1)
+  LEN=$(echo "$IDXLINE" | cut -f2)
+  REGION="${CONTIG}:1-${LEN}"
+
+  echo "bam-readcount: $BASE on $REGION"
+
+  bam-readcount \
+    -f "$REF" \
+    -d 10000000 \
+    -q 20 \
+    -b 20 \
+    "$BAM" "$REGION" \
+    > "$OUT/${BASE}.readcount.txt"
+done
+```
+Notes: <br>
+- takes about 4 min per aligned sample of around 4 mill reads. <br>
+- should probably change naming convention to be more parsable and not rely on just one letter Z or D for example.. <br>
+- `-f "$REF"` is the FASTA reference sequence 
+- `-d 10000000` - Maximum depth per position (set higher than my highest read depth); Default is often too low for ultra-deep libraries.
+- `-q 20` - Minimum mapping quality (MAPQ); Filters reads that align ambiguously. Ref is small size, and mapping rate is high, so MAPQ should be pretty high
+- `-b 20` - Minimum base quality - prevents low-quality sequencing errors from inflating mutation counts.
+- `"$BAM" "$REGION"` - Run only over the single contig region (1 to full length) Faster than scanning whole BAM blindly. Bc of idxstats, region is auto-detected from the BAM 
+
+### same loop but only for HASLEAD for No-Xrn1, NOLEAD for Xrn1: 
+```bash
+ROOT=/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT
+ALIGN="$ROOT/work/04_align"
+OUT="$ROOT/work/05_readcount"
+REFDIR="$ROOT/data/refseqs"
+
+mkdir -p "$OUT"
+
+for BAM in "$ALIGN"/*.sorted.bam; do
+  [[ -e "$BAM" ]] || continue
+  BASE=$(basename "$BAM" .sorted.bam)
+
+  # Keep only:
+  #   R samples -> HASLEAD
+  #   X samples -> NOLEAD
+  if [[ "$BASE" == *-R-* ]]; then
+    [[ "$BASE" == *.HASLEAD ]] || continue
+  elif [[ "$BASE" == *-X-* ]]; then
+    [[ "$BASE" == *.NOLEAD ]] || continue
+  else
+    echo "Skipping (not R or X): $BASE"
+    continue
+  fi
+
+  # Reference fasta based on virus
+  if [[ "$BASE" == *-Z* ]]; then
+    REF="$REFDIR/zikv_xr2_wt.fa"
+  elif [[ "$BASE" == *-D* ]]; then
+    REF="$REFDIR/denv_xr2_wt.fa"
+  else
+    echo "Unknown virus for $BASE — skipping"
+    continue
+  fi
+
+  # Determine contig name + length from BAM index stats
+  IDXLINE=$(samtools idxstats "$BAM" | head -n 1)
+  CONTIG=$(echo "$IDXLINE" | cut -f1)
+  LEN=$(echo "$IDXLINE" | cut -f2)
+  REGION="${CONTIG}:1-${LEN}"
+
+  echo "bam-readcount: $BASE on $REGION"
+
+  bam-readcount \
+    -f "$REF" \
+    -d 10000000 \
+    -q 20 \
+    -b 20 \
+    "$BAM" "$REGION" \
+    > "$OUT/${BASE}.readcount.txt"
+done
+```
+`* -R-*` samples: only runs if filename ends with .HASLEAD; 
+`* -X-*` samples: only runs if filename ends with .NOLEAD
+
+# 06_counts
+
+## transform BAM readcounts into mutation features for frequency analysis
+```
+bam-readcount outputs
+        ↓
+mutation features (pos_ref>alt)
+        ↓
+counts matrix
+        ↓
+DESeq2 statistics
+        ↓
+plot
+```
+```
+06_counts/
+ ── alt_counts.tsv     # matrix for DESeq2
+ ── sample_table.tsv   # metadata
+ ```
+ 
+create output dir: 
+```bash
+ROOT=/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT
+mkdir -p $ROOT/work/06_counts
+```
+run python script **readcount_to_matrix.py**: <br>
+```bash
+export READCOUNT_DIR=$ROOT/work/05_readcount
+export OUTDIR=$ROOT/work/06_counts
+
+python $ROOT/scripts/readcount_to_matrix.py
+```
+
+output files: <br>
+`alt_counts.tsv`: Rows = mutation features
+example: 
+```
+feature        ZR1   ZR2   ZX1 ...
+31_A>G         523   510   22
+31_A>C         490   501   430
+...
+```
+Each row = one substituion mutation at given position <br>
+
+`sample_table.tsv`
+```
+sample     virus   condition   replicate
+ZR-01      ZIKV    R           01
+ZX-01      ZIKV    X           01
+...
+```
+tells DESeq2 what to compare 
+
+# 07_DESeq2
+scp to local and open R. 
+```bash
+scp -r jgg2144@hpc.c2b2.columbia.edu:/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT/work/06_counts/"*.tsv" work/06_counts
+```
+manually edited the data files so that only "HASLEAD" for No-Xrn1 and "NOLEAD" for Xrn1-treated were included for each replicate. 
+
+find DESeq2 and plotting information in `/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT/workflows/DESeq2/mut_count_plot_2.rmd`
+
+---------- 
+# attempts preceding Feb 23, 2026: <br>
 # 05_pileup
 
 use samtools to get pileup information (input is the bam file)<br>
