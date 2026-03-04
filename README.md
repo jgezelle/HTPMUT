@@ -597,6 +597,48 @@ manually edited the data files so that only "HASLEAD" for No-Xrn1 and "NOLEAD" f
 
 find DESeq2 and plotting information in `/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT/workflows/DESeq2/mut_count_plot_2.rmd`
 
+# anchor to invariant WT region , and have DESeq do ratio of ratios for each condition relative to WT. 
+ ```bash
+ ROOT=/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT
+ALIGN="$ROOT/work/04_align"
+OUT="$ROOT/work/08_wt_freq"
+REFDIR="$ROOT/data/refseqs"
+SAMPLETAB="$ROOT/work/06_counts/sample_table_edit.csv" # this csv was manually edited locally so only the Xrn1-treated samples without leader and the No-Xrn1 samples with the leader were considered for analysis. 
+
+mkdir -p "$OUT"
+
+ZIKV_MIN=29; ZIKV_MAX=107
+DENV_MIN=28; DENV_MAX=104
+
+tail -n +2 "$SAMPLETAB" | while IFS=, read -r sample virus condition replicate; do
+
+  BAM="$ALIGN/${sample}.sorted.bam"
+
+  if [[ ! -f "$BAM" ]]; then
+    echo "Missing BAM: $BAM" >&2
+    continue
+  fi
+
+  if [[ "$virus" == "ZIKV" ]]; then
+    REF="$REFDIR/zikv_xr2_wt.fa"
+    POSMIN=$ZIKV_MIN
+    POSMAX=$ZIKV_MAX
+  else
+    REF="$REFDIR/denv_xr2_wt.fa"
+    POSMIN=$DENV_MIN
+    POSMAX=$DENV_MAX
+  fi
+
+  echo "WT+burden: $sample ($virus $condition)"
+  python "$ROOT/scripts/bam_wt_mut_burden.py" \
+    "$BAM" "$REF" "$POSMIN" "$POSMAX" \
+    "$OUT/$sample"
+
+done
+```
+
+
+
 ---------- 
 # attempts preceding Feb 23, 2026: <br>
 # 05_pileup
