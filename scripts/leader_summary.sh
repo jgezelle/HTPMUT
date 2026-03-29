@@ -1,5 +1,5 @@
 # Directory with trimmed and split files
-TRIM=/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT/work/02_trim
+TRIM=/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT/work/02_trim/260327
 
 # Output summary table
 SUMMARY="$TRIM/leader_summary.tsv"

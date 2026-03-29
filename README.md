@@ -38,32 +38,6 @@ cd "$RAW"
 export SRC=/groups/as6282_gp/data_bkup/jgg2144/20260121_Aviti
 ls $SRC/*.fastq.gz
 ```
-### (from `RAW` dir):
-```bash
-ln -s $SRC/A3413_R1.fastq.gz  260120-r0400-DR-01-A3413_R1.fastq.gz
-ln -s $SRC/A3429_R1.fastq.gz  260120-r0400-DX-01-A3429_R1.fastq.gz
-
-ln -s $SRC/A3419_R1.fastq.gz  260120-r0400-DR-02-A3419_R1.fastq.gz
-ln -s $SRC/A3499_R1.fastq.gz  260120-r0400-DX-02-A3499_R1.fastq.gz
-
-ln -s $SRC/A3485_R1.fastq.gz  260120-r0400-DR-03-A3485_R1.fastq.gz
-ln -s $SRC/A3484_R1.fastq.gz  260120-r0400-DX-03-A3484_R1.fastq.gz
-
-ln -s $SRC/A3483_R1.fastq.gz  260120-r0399-ZR-01-A3483_R1.fastq.gz
-ln -s $SRC/A3466_R1.fastq.gz  260120-r0399-ZX-01-A3466_R1.fastq.gz
-
-ln -s $SRC/A3456_R1.fastq.gz  260120-r0399-ZR-02-A3456_R1.fastq.gz
-ln -s $SRC/A3452_R1.fastq.gz  260120-r0399-ZX-02-A3452_R1.fastq.gz
-
-ln -s $SRC/A3451_R1.fastq.gz  260120-r0399-ZR-03-A3451_R1.fastq.gz
-ln -s $SRC/A3450_R1.fastq.gz  260120-r0399-ZX-03-A3450_R1.fastq.gz
-
-```
-
-**check symlinks worked:**<br>
-```bash
-ls -lh
-```
 
 ### had previously set up a conda env, for `viromelib` project, will activate: 
 **(done before):** <br>
@@ -598,12 +572,31 @@ manually edited the data files so that only "HASLEAD" for No-Xrn1 and "NOLEAD" f
 find DESeq2 and plotting information in `/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT/workflows/DESeq2/mut_count_plot_2.rmd`
 
 # anchor to invariant WT region , and have DESeq do ratio of ratios for each condition relative to WT. 
+### relies on a scripts named `bam_wt_mut_burden`, which: 
+- restricts to the mutated/degenerate base window (for ZIKV, 29-107, for DENV, 28-104)
+- if a read base is not equal to the reference base, call as mutation 
+- qc filters: base quality ≥ 20, mapping quality ≥ 20
+- count mutations per read 
+- get WT frequency, `wt_reads`= number of reads with 0 mutations; `wt_fraction`= `wt_reads`/`total_reads` - giving the WT haplotype abundance
+- also get the mutation burden: frequency of n=1,2,3.. mutations (get an idea of how many mutations coexist on same molecule)
+- results in a true WT reference, direct measure of exact WT on the SEQUENCE level, not BASE level.
+- can now normalize the per BASE mutation frequency to the WT frequency.
+- log2FC will now be:
+```
+log2FC = (mutant/WT)_X vs (mutant/WT)_R
+```
+- sets WT as baseline, 0, so now when plotting, each dot means: how much this mutation changed in X vs R relative to WT molecules
+- can apply the mutation burden data to filter only mutation burden = 1 for single mutants. (will have fewer reads as some signal is lost)
+
+
+
+
  ```bash
  ROOT=/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT
 ALIGN="$ROOT/work/04_align"
 OUT="$ROOT/work/08_wt_freq"
 REFDIR="$ROOT/data/refseqs"
-SAMPLETAB="$ROOT/work/06_counts/sample_table_edit.csv" # this csv was manually edited locally so only the Xrn1-treated samples without leader and the No-Xrn1 samples with the leader were considered for analysis. 
+SAMPLETAB="$ROOT/work/06_counts/sample_table_edit.csv" # this csv was manually edited locally, so only the Xrn1-treated samples without leader and the No-Xrn1 samples with the leader were considered for analysis. 
 
 mkdir -p "$OUT"
 
@@ -637,7 +630,40 @@ tail -n +2 "$SAMPLETAB" | while IFS=, read -r sample virus condition replicate; 
 done
 ```
 
+fix header of `HTPMUT/work/08_wt_freq` - issue in making the table.. <br>
+```
+OUT=/groups/as6282_gp/scratch_bkup/jgg2144/HTPMUT/work/08_wt_freq
 
+> "$OUT/WT_summary_all.tsv"
+
+first=1
+for f in "$OUT"/*.summary.tsv; do
+  if [[ $first -eq 1 ]]; then
+    cat "$f" > "$OUT/WT_summary_all.tsv"
+    first=0
+  else
+    tail -n +2 "$f" >> "$OUT/WT_summary_all.tsv"
+  fi
+done
+
+head -n 5 "$OUT/WT_summary_all.tsv"
+wc -l "$OUT/WT_summary_all.tsv"
+```
+
+```
+# steps: 
+
+Plot mutation burden distribution 
+
+Run DESeq2 with WT offset on all reads
+
+Generate single-mutant matrix
+
+Run DESeq2 on single mutants only
+
+Compare bubble plots
+```
+### **Follow plotting notebook in R notebook** (found in workflows too)
 
 ---------- 
 # attempts preceding Feb 23, 2026: <br>

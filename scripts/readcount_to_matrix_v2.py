@@ -10,18 +10,13 @@ OUTDIR = os.environ["OUTDIR"]
 BASES = ["A","C","G","T"]
 
 def parse_sample(sample):
+    # e.g. 260325-r0415-S-X-2-A3477_R1.NOLEAD
     parts = sample.split("-")
+    virus_code = parts[2]      # S or B
+    condition  = parts[3]      # X or R
+    replicate  = parts[4]      # 1 or 2
 
-    code = None
-    for p in parts:
-        if p in ["ZR","ZX","DR","DX"]:
-            code = p
-            break
-
-    virus = "ZIKV" if code[0]=="Z" else "DENV"
-    condition = "R" if code[1]=="R" else "X"
-    replicate = parts[parts.index(code)+1]
-
+    virus = "SCNV" if virus_code == "S" else "BENY"
     return virus, condition, replicate
 
 
