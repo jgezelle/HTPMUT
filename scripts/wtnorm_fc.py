@@ -55,7 +55,7 @@ from statsmodels.stats.proportion import proportions_ztest
 matplotlib.rcParams['pdf.fonttype'] = 42
 matplotlib.rcParams['svg.fonttype'] = 'none'
 
-EXCLUDE_START   = 29      # exclude positions 1-29 (leader / before stop site)
+EXCLUDE_START   = 30      # exclude positions 1-29 (leader / before stop site)
 MIN_DEPTH_RATIO = 0.5     # minimum X/R depth ratio — catches transition zone
 MIN_DEPTH_X   = 500   # require meaningful X coverage
 MIN_DEPTH_R   = 1000  # R should always have deep coverage
