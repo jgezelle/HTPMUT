@@ -1,0 +1,80 @@
+---
+title: "HTPMUT, WT offset"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+library(tidyverse)
+```
+# Plot mutation burden
+### after copying contents (*.burden.tsv) of work/08_wt_freq to working directory
+```{r}
+library(tidyverse)
+
+BURDEN_DIR <- "work/08_wt_freq"
+meta_path  <- "work/06_counts/sample_table_edit.csv"
+
+meta_df <- read.csv(meta_path, check.names = FALSE)
+
+burden_df <- list.files(BURDEN_DIR, pattern = "\\.burden\\.tsv$", full.names = TRUE) %>%
+  map_dfr(~ read_tsv(.x, show_col_types = FALSE) %>%
+            mutate(sample = sub("\\.burden\\.tsv$", "", basename(.x))))
+
+# Join to the edited sample table instead of guessing from regex
+burden_df <- burden_df %>%
+  left_join(meta_df, by = "sample") %>%
+  group_by(sample) %>%
+  mutate(frac = count / sum(count)) %>%
+  ungroup()
+
+# Check that condition labels are now present and balanced
+table(burden_df$virus, burden_df$condition)
+burden_df %>% distinct(sample, virus, condition, replicate)
+
+```
+# plot 
+```{r}
+ggplot(burden_df, aes(x = n_mutations, y = frac, fill = condition)) +
+  geom_col(position = "dodge") +
+  facet_grid(virus ~ replicate) +
+  theme_classic() +
+  labs(
+    x = "Mutations per read in minimal element",
+    y = "Fraction of reads",
+    title = "Mutation burden distribution"
+  )
+```
+
+# second summary plot (means)
+```{r}
+burden_summary <- burden_df %>%
+  group_by(virus, condition, n_mutations) %>%
+  summarize(
+    mean_frac = mean(frac),
+    sd_frac = sd(frac),
+    .groups = "drop"
+  )
+
+ggplot(burden_summary, aes(x = n_mutations, y = mean_frac, fill = condition)) +
+  geom_col(position = "dodge") +
+  facet_wrap(~ virus) +
+  theme_classic() +
+  labs(
+    x = "Mutations per read in minimal element",
+    y = "Mean fraction across replicates",
+    title = "Average mutation burden distribution"
+  )
+```
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+

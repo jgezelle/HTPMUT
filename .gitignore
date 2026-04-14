@@ -70,7 +70,7 @@ data/refseqs/
 *.pdf
 
 # tmp workflows and notes
-workflows/notes/notes.md
+# workflows/notes/notes.md
 
 # old useless scripts, scripts with issues  
 scripts/plot_heatmap_v2.py
